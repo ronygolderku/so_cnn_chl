@@ -250,6 +250,7 @@ def chloro_prediction(ds_input,model,log,d1_pred,d2_pred,Xm,Xstd,Cm,Cstd,var_inp
         os.makedirs(log + 'Chloro_pred/')
     #Load the weight of the trained model
     model.load_state_dict(torch.load(log + 'model.pt',map_location=torch.device('cpu')))    
+    model.eval()
     
     x_test = ds_input.sel(time = slice(d1_pred,d2_pred))
     x_test   = x_test.fillna(0)
