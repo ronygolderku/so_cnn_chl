@@ -14,102 +14,134 @@ from torchvision.transforms import Compose, ToTensor
 from torch.utils.data import DataLoader
 
 from config import CHLConfig
-from models import CNN,CNN_W,UNet
+from models import CNN,UNet
 from functions import Dataset_XY,Dataset_X,train_network,train_val_dataset,chloro_prediction,test_metrics,plot_trend
         
 cs = ConfigStore.instance()
 cs.store(name="chl_config", node=CHLConfig)
 log = logging.getLogger(__name__)
-
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: CHLConfig) -> None:
     start_time = time.time()
     log.info(OmegaConf.to_yaml(cfg))
 
-    #LOAD INPUT AND SCALING
-    #######################
+    # Define file paths explicitly
+    base_path = "/A04/so_data/Trend_paper/CNN_training/obs/"
+    chl_file = base_path + "Same_grid_CHL_25km.nc"
+    sst_file = base_path + "Same_grid_SST_25km.nc"
+    mld_file = base_path + "Same_grid_MLD_25km.nc"
+    ws_file  = base_path + "Same_Grid_Wind_masked_25km.nc"
+
+    # LOAD INPUT VARIABLES AND SCALE
+    ###############################
     if cfg.data.input == 'obs':
-        ds_input = xr.open_mfdataset(cfg.path.data_input + 'Input_obs9_*.nc')
-        ds_input = ds_input.transpose('time', 'latitude', 'longitude')
-        a = ds_input.mask.where(ds_input.mask==6)
-        mask = np.isnan(a)
-        mask = ~mask   
-        ds_input = ds_input.assign(variables={"mask": (('latitude','longitude'), mask.data)}) 
-        ds_input = ds_input.sel(latitude = slice(cfg.data.lat_min,cfg.data.lat_max),
-                                longitude = slice(cfg.data.lon_min,cfg.data.lon_max))
+        ds_sst = xr.open_dataset(sst_file)
+        ds_mld = xr.open_dataset(mld_file)
+        ds_ws  = xr.open_dataset(ws_file)
+
+        # Merge inputs into one dataset
+        ds_input = xr.merge([ds_sst, ds_mld, ds_ws])
+        ds_input = ds_input.transpose('time', 'lat', 'lon')
+        # a = xr.open_dataset(chl_file).mask.where(lambda x: x == 6)  # Using CHL mask
+        # mask = ~np.isnan(a)
+        # ds_input = ds_input.assign(mask=(('lat', 'lon'), mask.data))
+
+        # ds_input = ds_input.sel(lat=slice(cfg.data.lat_min, cfg.data.lat_max),
+        #                         lon=slice(cfg.data.lon_min, cfg.data.lon_max))
+    # Normalize input
+    #x_train = ds_input.sel(time=slice(cfg.data.d1_train, cfg.data.d2_train)).load()
+    
+    x_train = ds_input.sel(time=slice(cfg.data.d1_train, cfg.data.d2_train))
+    for var in cfg.data.var_input:
+        x_train[var] = x_train[var].fillna(0)
+
+    # Step 3: Load after filling
+    x_train = x_train.load()
+    # After fillna, check for NaN or Infinite values
+    print("Number of NaN values in x_train after fillna:", np.sum(np.isnan(x_train)))
+    print("Number of Infinite values in x_train after fillna:", np.sum(np.isinf(x_train)))
+    
+    Xm = x_train.mean(dim='time', skipna=True).fillna(0)
+    Xstd = x_train.std(dim='time', skipna=True).fillna(1)
+    x_scaled = (x_train - Xm) / Xstd
+
+    # Check for NaN or Infinite values in x_scaled
+    print("Number of NaN values in x_scaled:", np.sum(np.isnan(x_scaled)))
+    print("Number of Infinite values in x_scaled:", np.sum(np.isinf(x_scaled)))
+
+    n_channel = len(cfg.data.var_input)
+    X_scaled = np.zeros([
+        x_train.time.size,
+        x_train.lat.size,
+        x_train.lon.size,
+        n_channel
+    ])
+
+    # Check the shape of the X_scaled array before filling
+    print("Shape of X_scaled before filling:", X_scaled.shape)
+
+    for i, var in enumerate(cfg.data.var_input):
+         filled_data = x_scaled[var].fillna(0).data.astype('float32')
+         X_scaled[:, :, :, i] = filled_data
+        
+         print(f"[DEBUG] NaNs in final X_scaled for '{var}':", np.sum(np.isnan(filled_data)))
+         print(f"[DEBUG] Infs in final X_scaled for '{var}':", np.sum(np.isinf(filled_data)))
+
+    # After processing, check for NaN or Infinite values in the entire X_scaled array
+    print("Total Number of NaN values in X_scaled:", np.sum(np.isnan(X_scaled)))
+    print("Total Number of Infinite values in X_scaled:", np.sum(np.isinf(X_scaled)))
+
+    # LOAD CHL OUTPUT AND SCALE
+    ###########################
+    if cfg.data.output == 'globcolour_cmems':
+        ds_out = xr.open_dataset(chl_file)
+        ds_out = ds_out.rename({'CHL': 'chloro'})
+        # ds_out = ds_out.sel(lat=slice(cfg.data.lat_min, cfg.data.lat_max),
+        #                     lon=slice(cfg.data.lon_min, cfg.data.lon_max))
+        # ds_out = ds_out.assign(mask=(('lat', 'lon'), mask.data))
+        # ds_out = ds_out.where(ds_out.mask == 1)
+
+        # Set monthly start date
+        new_index = pd.date_range(
+            start=str(ds_out.time[0].data)[0:7],
+            end=str(ds_out.time[-1].data)[0:7],
+            freq='MS'
+        )
+        ds_out = ds_out.assign_coords(time=new_index)
+        y_train = ds_out.sel(time=slice(cfg.data.d1_train, cfg.data.d2_train)).astype('float32').load()
+
+        # === Check CHL-a == 0 before log transform ==============================================================
+        chl_data = y_train['chloro'].data
+        num_chl_zero = np.sum(chl_data == 0)
+        print(f"[INFO] Number of CHL-a values exactly equal to 0 before log: {num_chl_zero}")
+
+        chl_data[chl_data == 0] = np.nan  # Replace 0 with NaN
+        y_train = y_train.assign(chloro=(('time', 'lat', 'lon'), chl_data))
+        # === Check CHL-a == 0 before log transform END ==============================================================
 
         
-    #Normalise input, fill land with 0, save in X_scaled
-    x_train = ds_input.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).load()
-    x_train = x_train.fillna(0)
-    Xm   = x_train.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).mean(skipna = True)
-    Xstd = x_train.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).std(skipna = True)
-    x_scaled = (x_train - Xm)/Xstd
-    n_channel = len(cfg.data.var_input)
-    X_scaled = np.zeros([x_train.time.size,
-                         x_train.latitude.size,
-                         x_train.longitude.size,
-                         n_channel])
-    i = 0
-    for v in cfg.data.var_input:
-        X_scaled[:,:,:,i] = x_scaled[v].data.astype('float32')
-        i+=1
-
-    #LOAD OUTPUT AND SCALING
-    ########################
-    if cfg.data.output == 'obs_cci':
-        ds_out = xr.open_mfdataset(cfg.path.data_output + 'OC_CCI_chloro_a_*.nc')
-        ds_out = ds_out.rename({'chlor_a_coarse':'chloro'})
-        ds_out = ds_out.sel(latitude = slice(cfg.data.lat_min,cfg.data.lat_max),
-                            longitude = slice(cfg.data.lon_min,cfg.data.lon_max))
-        ds_out = ds_out.assign(variables={"mask": (('latitude','longitude'), ds_input.mask.data)}) 
-        ds_out = ds_out.where(ds_out.mask == 1)
-        y_train = ds_out.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).load()
-
-    if cfg.data.output == 'obs_globcolour':
-        if cfg.data.sensor=='GSM':
-            MODVIR    = xr.open_mfdataset(cfg.path.data_output + "MODVIR_*.nc")
-            MERMOD    = xr.open_mfdataset(cfg.path.data_output + "MERMOD_*.nc")
-            MERMODVIR = xr.open_mfdataset(cfg.path.data_output + "MERMODVIR_*.nc")
-            MERMODSWF = xr.open_mfdataset(cfg.path.data_output + "MERMODSWF_*.nc")
-            SWF    = xr.open_mfdataset(cfg.path.data_output + "SWF_*.nc")
-            SWF    = SWF.sel(time = slice('1997-09','2002-06'))
-            ds_gsm = MODVIR.merge(MERMOD)
-            ds_gsm = ds_gsm.merge(MERMODSWF)
-            ds_gsm = ds_gsm.merge(SWF)
-            ds_out = ds_gsm.merge(MERMODVIR)
-        if cfg.data.sensor!='GSM':
-            ds_out = xr.open_mfdataset(cfg.path.data_output + cfg.data.sensor + '*.nc')
-        ds_out = ds_out.rename({'CHL1_coarse':'chloro'})
-        ds_out = ds_out.sel(latitude = slice(cfg.data.lat_min,cfg.data.lat_max),
-                            longitude = slice(cfg.data.lon_min,cfg.data.lon_max))
-        ds_out = ds_out.assign(variables={"mask": (('latitude','longitude'), ds_input.mask.data)}) 
-        ds_out = ds_out.where(ds_out.mask == 1)
-        y_train = ds_out.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).astype('float32').load()
-
-    if cfg.data.output == 'globcolour_cmems':
-        with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-            ds_out = xr.open_mfdataset(cfg.path.data_output + "Globcolour_CMEMS_chl_*.nc")
-        ds_out = ds_out.rename({'chl':'chloro'})
-        ds_out = ds_out.sel(latitude = slice(cfg.data.lat_min,cfg.data.lat_max),
-                            longitude = slice(cfg.data.lon_min,cfg.data.lon_max))
-        ds_out = ds_out.assign(variables={"mask": (('latitude','longitude'), ds_input.mask.data)}) 
-        ds_out = ds_out.where(ds_out.mask == 1)
-        # Create a new datetime index with the day component set to 01
-        new_index = pd.date_range(start=str(ds_out.time[0].data)[0:7], end=str(ds_out.time[-1].data)[0:7], freq='MS')
-        ds_out = ds_out.assign_coords(time=new_index)
-        y_train = ds_out.sel(time = slice(cfg.data.d1_train,cfg.data.d2_train)).astype('float32').load()
-
-    #Normalise output, log-transform, save in Y_scaled
+    # Log-transform output
     y_train = np.log(y_train)
-    # Replace -inf with -10 (for CanESM5 CMIP model)
     chloro_inf = y_train['chloro'].where(~np.isinf(y_train['chloro']), other=-10)
-    y_train = y_train.assign(variables={"chloro": (('time','latitude','longitude'), chloro_inf.data)})
+    y_train = y_train.assign(chloro=(('time', 'lat', 'lon'), chloro_inf.data))
 
-    Cm   = y_train['chloro'].mean(skipna = True)
-    Cstd = y_train['chloro'].std(skipna = True)
-    C_scaled = (y_train['chloro'] - Cm)/Cstd
+    
+    Cm = y_train['chloro'].mean(skipna=True)
+    Cstd = y_train['chloro'].std(skipna=True)
+    C_scaled = (y_train['chloro'] - Cm) / Cstd
     Y_scaled = C_scaled.data
+
+    print("X_scaled shape:", X_scaled.shape)
+    print("Y_scaled shape:", Y_scaled.shape)
+    print("Number of values in Y_scaled exactly equal to 0:", np.sum(Y_scaled == 0))
+    
+    ###########################################################################
+    # Masking the 0 values in Y_scaled
+    Y_scaled[Y_scaled == 0] = np.nan  # Replace Y_scaled == 0 with NaN
+    zero_indices = np.where(Y_scaled == 0)
+    print("Locations of Y_scaled == 0:", zero_indices)
+    print("Corresponding original chloro values at these locations:", y_train['chloro'].data[zero_indices])
+    ##################
     
     #CHOICE OF MODEL
     ################

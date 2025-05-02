@@ -46,7 +46,9 @@ def train_network(model,dataloaders, criterion ,n_epochs, lr, path_log):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     torch.set_default_dtype(torch.float)
     train_losses_save, valid_losses_save = [], [] 
-    valid_loss_min = np.Inf # track change in validation loss
+    #valid_loss_min = np.Inf # track change in validation loss
+    valid_loss_min = np.inf
+
 
     for epoch in range(1, n_epochs+1):
         train_loss = 0.0

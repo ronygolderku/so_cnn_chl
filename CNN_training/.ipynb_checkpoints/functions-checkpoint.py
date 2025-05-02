@@ -46,7 +46,9 @@ def train_network(model,dataloaders, criterion ,n_epochs, lr, path_log):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     torch.set_default_dtype(torch.float)
     train_losses_save, valid_losses_save = [], [] 
-    valid_loss_min = np.Inf # track change in validation loss
+    #valid_loss_min = np.Inf # track change in validation loss
+    valid_loss_min = np.inf
+
 
     for epoch in range(1, n_epochs+1):
         train_loss = 0.0
@@ -250,6 +252,7 @@ def chloro_prediction(ds_input,model,log,d1_pred,d2_pred,Xm,Xstd,Cm,Cstd,var_inp
         os.makedirs(log + 'Chloro_pred/')
     #Load the weight of the trained model
     model.load_state_dict(torch.load(log + 'model.pt',map_location=torch.device('cpu')))    
+    model.eval()
     
     x_test = ds_input.sel(time = slice(d1_pred,d2_pred))
     x_test   = x_test.fillna(0)
