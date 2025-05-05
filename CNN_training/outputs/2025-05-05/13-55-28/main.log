@@ -35,3 +35,7 @@ path:
   data_output: /A04/so_data/Trend_paper/CNN_training/obs/
   log: ${hydra:run.dir}/
 
+[2025-05-05 18:27:56,177][__main__][INFO] - Training done.
+[2025-05-05 18:27:56,177][__main__][INFO] - Computing chlorophyl predictions...
+[2025-05-05 18:29:02,511][__main__][INFO] - Prediction of test dataset done.
+[2025-05-05 18:29:02,511][__main__][INFO] - Computing Metrics...
