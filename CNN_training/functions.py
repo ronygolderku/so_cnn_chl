@@ -315,6 +315,8 @@ def test_metrics(ds_out,log,d1_test, d2_test):
     mask = np.isnan(y_test.chloro) #Remove predicted Clouds and missing data
     mask = ~mask            
     y_pred = y_pred.where(mask == 1)
+    valid_mask = ~np.isnan(y_test.chloro)
+    y_pred = y_pred.where(valid_mask)
     
     #Stack and dropna
     obs = y_test.chloro.stack(n_prof=("longitude", "latitude","time"))
@@ -323,8 +325,14 @@ def test_metrics(ds_out,log,d1_test, d2_test):
 
     pred = y_pred.chloro_pred.stack(n_prof=("longitude", "latitude","time"))
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-        pred = pred.dropna(dim = "n_prof",how="all")
-    
+        pred = pred.dropna(dim = "n_prof",how="all").compute()
+
+    # Filter out values that would result in -inf in log space
+    valid_log_mask = (~np.isinf(obs)) & (~np.isinf(pred))
+    obs = obs.where(valid_log_mask, drop=True)
+    pred = pred.where(valid_log_mask, drop=True)
+
+    # Apply log transform
     obs  = np.log(obs)
     pred = np.log(pred)
     
