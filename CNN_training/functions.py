@@ -294,7 +294,7 @@ def chloro_prediction(ds_input,model,log,d1_pred,d2_pred,Xm,Xstd,Cm,Cstd,var_inp
             y_pred.to_netcdf(log +'Chloro_pred/Chloro_pred_' + str(y_pred.isel(time = 0).time.data)[0:10] + '.nc')
             y_pred.close()
 
-def test_metrics(ds_out,log,d1_test, d2_test):
+def test_metrics(ds_out, log, d1_test, d2_test):
     """
     Compute test metrics.
     
@@ -308,36 +308,55 @@ def test_metrics(ds_out,log,d1_test, d2_test):
     -------
     Metrics.csv : Table of metrics computed 
     """ 
-    y_test = ds_out.sel(time = slice(d1_test,d2_test)).load()
-
-    y_pred = xr.open_mfdataset(log +'Chloro_pred/Chloro_pred_*.nc')
-    y_pred = y_pred.sel(time = slice(d1_test,d2_test)).load()
-    mask = np.isnan(y_test.chloro) #Remove predicted Clouds and missing data
-    mask = ~mask            
-    y_pred = y_pred.where(mask == 1)
-    valid_mask = ~np.isnan(y_test.chloro)
-    y_pred = y_pred.where(valid_mask)
+    # Load test data
+    y_test = ds_out.sel(time=slice(d1_test, d2_test)).load()
+    y_pred = xr.open_mfdataset(log + 'Chloro_pred/Chloro_pred_*.nc')
+    y_pred = y_pred.sel(time=slice(d1_test, d2_test)).load()
     
-    #Stack and dropna
-    obs = y_test.chloro.stack(n_prof=("longitude", "latitude","time"))
-    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-        obs = obs.dropna(dim = "n_prof",how="all")
+    print("Checking y_test:", y_test)
+    print("Checking y_pred:", y_pred)
+    
+    # Mask predicted values where observation is missing
+    mask = np.isnan(y_test.chloro)  # Remove predicted Clouds and missing data
+    mask = ~mask  
 
-    pred = y_pred.chloro_pred.stack(n_prof=("longitude", "latitude","time"))
-    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-        pred = pred.dropna(dim = "n_prof",how="all").compute()
+    print("Mask shape:", mask.shape)
+    print("Mask True count:", mask.values.sum())
+    
+    y_pred = y_pred.where(mask == 1)
+    print("Checking after the mask:", y_pred)
 
+    # Stack and drop NaNs
+    obs = y_test.chloro.stack(n_prof=("longitude", "latitude", "time"))
+    print("obs shape before dropna:", obs.shape)
+    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+        obs = obs.dropna(dim="n_prof", how="all")
+    print("obs shape after dropna:", obs.shape)
+
+    pred = y_pred.chloro_pred.stack(n_prof=("longitude", "latitude", "time"))
+    print("pred shape before dropna:", pred.shape)
+    with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+        pred = pred.dropna(dim="n_prof", how="all").compute()
+    print("pred shape after dropna:", pred.shape)
+    
     # Filter out values that would result in -inf in log space
     valid_log_mask = (~np.isinf(obs)) & (~np.isinf(pred))
     obs = obs.where(valid_log_mask, drop=True)
     pred = pred.where(valid_log_mask, drop=True)
 
-    # Apply log transform
-    obs  = np.log(obs)
-    pred = np.log(pred)
+    print("obs shape after valid_log_mask:", obs.shape)
+    print("pred shape after valid_log_mask:", pred.shape)
+
     
+    # Apply log transform
+    obs = np.log(obs)
+    pred = np.log(pred)
     # Replace -inf with -10 (for CanESM5 CMIP model)
     obs = obs.where(~np.isinf(obs), other=-10)
+
+
+    print("obs shape after log transform:", obs.shape)
+    print("pred shape after log transform:", pred.shape)
 
     reg = stats.linregress(obs,pred)
     slope     = reg.slope.round(2)
@@ -346,11 +365,10 @@ def test_metrics(ds_out,log,d1_test, d2_test):
     r2        = (rvalue**2).round(2)
     rmse      = np.sqrt(((obs - pred) ** 2).mean()).round(2).compute().data
     mae       = np.abs((obs - pred)).mean().round(2).compute().data
-
-    #Display
-    df = pd.DataFrame([r2,rmse,mae,slope], columns=['Test ('+d1_test+' to '+d2_test+')']
-                , index=["R$^{2}$", "RMSE", "MAE", "Regression Slope"])
-    df.to_csv(log +'Metrics.csv')
+    
+    df = pd.DataFrame([r2, rmse, mae, slope], columns=['Test (' + d1_test + ' to ' + d2_test + ')'],
+                      index=["R$^{2}$", "RMSE", "MAE", "Regression Slope"])
+    df.to_csv(log + 'Metrics2.csv')
 
 
 def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train,t):
