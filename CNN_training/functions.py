@@ -331,13 +331,13 @@ def test_metrics(ds_out, log, d1_test, d2_test):
     print("obs shape before dropna:", obs.shape)
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         obs = obs.dropna(dim="n_prof", how="all")
-    print("obs shape after dropna:", obs.shape)
+        print("obs shape after dropna:", obs.shape)
 
     pred = y_pred.chloro_pred.stack(n_prof=("longitude", "latitude", "time"))
     print("pred shape before dropna:", pred.shape)
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         pred = pred.dropna(dim="n_prof", how="all").compute()
-    print("pred shape after dropna:", pred.shape)
+        print("pred shape after dropna:", pred.shape)
     
     # Filter out values that would result in -inf in log space
     valid_log_mask = (~np.isinf(obs)) & (~np.isinf(pred))
@@ -368,7 +368,7 @@ def test_metrics(ds_out, log, d1_test, d2_test):
     
     df = pd.DataFrame([r2, rmse, mae, slope], columns=['Test (' + d1_test + ' to ' + d2_test + ')'],
                       index=["R$^{2}$", "RMSE", "MAE", "Regression Slope"])
-    df.to_csv(log + 'Metrics2.csv')
+    df.to_csv(log + 'Metrics.csv')
 
 
 def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train,t):
