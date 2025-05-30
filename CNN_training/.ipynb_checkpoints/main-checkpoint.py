@@ -27,12 +27,12 @@ def main(cfg: CHLConfig) -> None:
     # LOAD INPUT VARIABLES AND SCALE
     ###############################
     if cfg.data.input == 'obs':
-        ds_input = xr.open_dataset(cfg.path.data_input + 'input_ds_sst_mld_ws.nc')
+        ds_input = xr.open_dataset(cfg.path.data_input + 'input_ds_sst_mld_ws_par_sla_masked_time.nc')
         ds_input = ds_input.transpose('time', 'latitude', 'longitude')
-        a = ds_input.mask.where(ds_input.mask==3)
+        a = ds_input.mask.where(ds_input.mask==5) ## mask =5 due to the number of variables
         mask = np.isnan(a)
         mask = ~mask   
-        ds_input = ds_input.assign(variables={"mask": (('latitude','longitude'), mask.data)}) 
+        ds_input = ds_input.assign(variables={"mask": (('time', 'latitude','longitude'), mask.data)}) 
         
     # Normalize input
     #x_train = ds_input.sel(time=slice(cfg.data.d1_train, cfg.data.d2_train)).load()
@@ -55,9 +55,10 @@ def main(cfg: CHLConfig) -> None:
     # LOAD CHL OUTPUT AND SCALE
     ###########################
     if cfg.data.output == 'globcolour_cmems':
-        ds_out = xr.open_dataset(cfg.path.data_output + "Same_grid_CHL_25km.nc")
+        ds_out = xr.open_dataset(cfg.path.data_output + "Same_grid_CHL_25km_masked.nc")
         ds_out = ds_out.rename({'CHL': 'chloro'})
-        ds_out = ds_out.assign(variables={"mask": (('latitude','longitude'), ds_input.mask.data)}) 
+        ds_out = ds_out.sel(time=ds_input.time)#####################new line add due to masking
+        ds_out = ds_out.assign(variables={"mask": (('time','latitude','longitude'), ds_input.mask.data)}) 
         ds_out = ds_out.where(ds_out.mask == 1)
 
         # Set monthly start date
@@ -100,6 +101,8 @@ def main(cfg: CHLConfig) -> None:
     if cfg.params.model == 'CNN':
         model = CNN(n_channel = n_channel,
                     rateDropout=cfg.params.rateDropout).to(device)
+    if cfg.params.model == 'UNet':
+        model = UNet(n_channels = n_channel, n_classes=1).to(device)
     
     if cfg.out.training:
         #DATALOADERS
@@ -111,7 +114,29 @@ def main(cfg: CHLConfig) -> None:
                                         random_state=cfg.params.random_state)
         #TRAINING
         #########
-        criterion = torch.nn.MSELoss()
+        def asymmetric_sigmoid_loss(output, target):
+            diff = output - target
+            diff2 = diff ** 2
+            mask = torch.sigmoid(diff)
+            losses = (2 - mask) * diff2  # penalize underestimation
+            return torch.mean(losses)
+
+        def quantile_loss(output, target, quantile):
+            assert 0 < quantile < 1 
+            errors = target - output
+            loss = torch.max((quantile - 1) * errors, quantile * errors)
+            return torch.abs(loss).mean()
+            
+        if cfg.params.loss_type=="asym":
+            criterion = asymmetric_sigmoid_loss
+        if cfg.params.loss_type=="mse":
+            criterion = torch.nn.MSELoss()
+        if cfg.params.loss_type=="mae":
+            criterion = torch.nn.L1Loss()
+        if cfg.params.loss_type == "quantile" and cfg.params.quantile == 0.95:
+            criterion = lambda output, target: quantile_loss(output, target, quantile=cfg.params.quantile) # lambda wrapper to pass quantile internally
+            
+
         train_network(model,dataloaders, criterion, 
                       n_epochs = cfg.params.n_epochs,
                       lr       = cfg.params.lr,

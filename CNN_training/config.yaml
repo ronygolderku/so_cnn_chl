@@ -1,28 +1,30 @@
 params:
-  model: CNN
-  rateDropout: 0.2
+  model: UNet
+  #rateDropout: 0.5   ### 0.2 for CNN and UNet 0.5
   val_split: 0.2
   lr: 0.001
-  batch_size: 8
+  batch_size: 8 ##4/8
   n_epochs: 300
   random_state: stratify  # can be 42 or None
+  #quantile: 0.95
+  loss_type: mae # mse/asym/mae(l1) Loss/ quantile.....................# new line added for asym
 
 data:
   input: obs
   output: globcolour_cmems  # or obs_globcolour, depending on use case
   sensor: GSM               # VIR, MER, MOD, OLA, SWF
-  d1_train: 2002-01
-  d2_train: 2009-12
-  d1_pred: 1993-01
-  d2_pred: 2020-12
+  d1_train: 2003-01
+  d2_train: 2010-12
+  d1_pred: 1998-01
+  d2_pred: 2023-12
   d1_test: 2011-01
-  d2_test: 2020-12
+  d2_test: 2017-12
   plot_date: 2017-01
   lat_min: -85
   lat_max: -30
   lon_min: -180
   lon_max: 180
-  var_input: ['sst', 'mlotst', 'wind_speed']  # Match variable names in .nc files
+  var_input: ['sst', 'mlotst', 'wind_speed', 'par', 'sla']  # Match variable names in .nc files
 
 out:
   training: True
@@ -33,4 +35,4 @@ out:
 path:
   data_input: "/A04/so_data/Trend_paper/CNN_training/obs/"
   data_output: "/A04/so_data/Trend_paper/CNN_training/obs/"
-  log: ${hydra:run.dir}/
+  log: ${hydra:run.dir}

@@ -1,0 +1,48 @@
+[2025-05-15 19:17:10,608][__main__][INFO] - params:
+  model: CNN
+  rateDropout: 0.2
+  val_split: 0.2
+  lr: 0.001
+  batch_size: 8
+  n_epochs: 300
+  random_state: stratify
+data:
+  input: obs
+  output: globcolour_cmems
+  sensor: GSM
+  d1_train: 2003-01
+  d2_train: 2010-12
+  d1_pred: 1998-01
+  d2_pred: 2023-12
+  d1_test: 2011-01
+  d2_test: 2020-12
+  plot_date: 2017-01
+  lat_min: -85
+  lat_max: -30
+  lon_min: -180
+  lon_max: 180
+  var_input:
+  - sst
+  - mlotst
+  - wind_speed
+  - par
+out:
+  training: true
+  prediction: true
+  metric: true
+  plot: true
+path:
+  data_input: /A04/so_data/Trend_paper/CNN_training/obs/
+  data_output: /A04/so_data/Trend_paper/CNN_training/obs/
+  log: ${hydra:run.dir}
+
+[2025-05-15 23:30:25,585][__main__][INFO] - Training done.
+[2025-05-15 23:30:25,586][__main__][INFO] - Computing chlorophyl predictions...
+[2025-05-15 23:31:39,887][__main__][INFO] - Prediction of test dataset done.
+[2025-05-15 23:31:39,887][__main__][INFO] - Computing Metrics...
+[2025-05-15 23:32:03,689][__main__][INFO] -          Unnamed: 0  Test (2011-01 to 2020-12)
+0           R$^{2}$                       0.54
+1              RMSE                       0.44
+2               MAE                       0.33
+3  Regression Slope                       0.56
+[2025-05-15 23:32:14,455][__main__][INFO] - Elapsed time: 4 hours, 15 minutes, 3.85 seconds

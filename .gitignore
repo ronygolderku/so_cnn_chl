@@ -1,1 +1,2 @@
 CNN_training/obs/*.nc
+CNN_training/outputs/**/*.nc

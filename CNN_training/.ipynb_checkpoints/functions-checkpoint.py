@@ -21,6 +21,12 @@ from torch.utils.data import Dataset, Subset, DataLoader
 import torch.optim as optim
 import torch
 
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib.path as mpath
+
+
 def train_network(model,dataloaders, criterion ,n_epochs, lr, path_log):
     """
     Train a neural network
@@ -312,40 +318,41 @@ def test_metrics(ds_out, log, d1_test, d2_test):
     y_test = ds_out.sel(time=slice(d1_test, d2_test)).load()
     y_pred = xr.open_mfdataset(log + 'Chloro_pred/Chloro_pred_*.nc')
     y_pred = y_pred.sel(time=slice(d1_test, d2_test)).load()
+    y_pred = y_pred.assign_coords(time=pd.to_datetime(y_pred.time.dt.strftime('%Y-%m-01')))
     
-    print("Checking y_test:", y_test)
-    print("Checking y_pred:", y_pred)
+    # print("Checking y_test:", y_test)
+    # print("Checking y_pred:", y_pred)
     
     # Mask predicted values where observation is missing
     mask = np.isnan(y_test.chloro)  # Remove predicted Clouds and missing data
     mask = ~mask  
 
-    print("Mask shape:", mask.shape)
-    print("Mask True count:", mask.values.sum())
+    # print("Mask shape:", mask.shape)
+    # print("Mask True count:", mask.values.sum())
     
     y_pred = y_pred.where(mask == 1)
-    print("Checking after the mask:", y_pred)
+    # print("Checking after the mask:", y_pred)
 
     # Stack and drop NaNs
     obs = y_test.chloro.stack(n_prof=("longitude", "latitude", "time"))
-    print("obs shape before dropna:", obs.shape)
+    # print("obs shape before dropna:", obs.shape)
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         obs = obs.dropna(dim="n_prof", how="all")
-        print("obs shape after dropna:", obs.shape)
+        # print("obs shape after dropna:", obs.shape)
 
     pred = y_pred.chloro_pred.stack(n_prof=("longitude", "latitude", "time"))
-    print("pred shape before dropna:", pred.shape)
+    # print("pred shape before dropna:", pred.shape)
     with dask.config.set(**{'array.slicing.split_large_chunks': False}):
         pred = pred.dropna(dim="n_prof", how="all").compute()
-        print("pred shape after dropna:", pred.shape)
+        # print("pred shape after dropna:", pred.shape)
     
     # Filter out values that would result in -inf in log space
     valid_log_mask = (~np.isinf(obs)) & (~np.isinf(pred))
     obs = obs.where(valid_log_mask, drop=True)
     pred = pred.where(valid_log_mask, drop=True)
 
-    print("obs shape after valid_log_mask:", obs.shape)
-    print("pred shape after valid_log_mask:", pred.shape)
+    # print("obs shape after valid_log_mask:", obs.shape)
+    # print("pred shape after valid_log_mask:", pred.shape)
 
     
     # Apply log transform
@@ -355,8 +362,8 @@ def test_metrics(ds_out, log, d1_test, d2_test):
     obs = obs.where(~np.isinf(obs), other=-10)
 
 
-    print("obs shape after log transform:", obs.shape)
-    print("pred shape after log transform:", pred.shape)
+    # print("obs shape after log transform:", obs.shape)
+    # print("pred shape after log transform:", pred.shape)
 
     reg = stats.linregress(obs,pred)
     slope     = reg.slope.round(2)
@@ -369,6 +376,63 @@ def test_metrics(ds_out, log, d1_test, d2_test):
     df = pd.DataFrame([r2, rmse, mae, slope], columns=['Test (' + d1_test + ' to ' + d2_test + ')'],
                       index=["R$^{2}$", "RMSE", "MAE", "Regression Slope"])
     df.to_csv(log + 'Metrics.csv')
+
+
+# Custom Antarctic map function
+def antarctic_map(ax):
+    def plot_text(p1, p2, ax, ang_d, txt):
+        l1 = np.array((p1[0], p1[1]))
+        l2 = np.array((p2[0], p2[1]))
+        th1 = ax.text(l1[0], l1[1], txt, fontsize=10,
+                      transform=nonproj,
+                      ha="center",
+                      rotation=ang_d, rotation_mode='anchor')
+
+    import cartopy.crs as ccrs
+    nonproj = ccrs.PlateCarree()
+    
+    # Set the extent and add features
+    ax.set_extent([-180, 180, -90, -30], nonproj)
+    ax.add_feature(cfeature.LAND, color='darkgrey')
+    ax.add_feature(cfeature.OCEAN, color='lightblue')
+    ax.add_feature(cfeature.COASTLINE, linewidth=1.25)
+    
+    # Add gridlines with labels and custom style
+    ax.gridlines(nonproj, draw_labels=False, linewidth=1, xlocs=range(-180, 171, 30), ylocs=[],
+                  color='gray', alpha=0.5, linestyle='--', zorder=10)
+    ax.gridlines(nonproj, draw_labels=True, linewidth=1, xlocs=[], ylocs=range(-90, -30, 10),
+                  color='gray', alpha=0.5, linestyle='--', zorder=10)
+
+    theta = np.linspace(0, 2 * np.pi, 100)
+    center, radius = [0.5, 0.5], 0.5
+    verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+    circle = mpath.Path(verts * radius + center)
+    ax.set_boundary(circle, transform=ax.transAxes)
+
+    for lon in range(-180, 180, 30):
+        lat = -33  # determined by inspection
+
+        a1, a2 = -29.5, -39  # text anchor for general use ...
+        # ... need adjustments in some cases
+
+        if lon >= 90 and lon <= 170:
+            plot_text([lon, a1 + 2.35], [lon, a2], ax, -lon - 180, str(lon) + "°E")
+            # Special rotation+shift
+        elif lon < -90 and lon >= -170:
+            # Need a1+2 to move texts in line with others
+            plot_text([lon, a1 + 2.5], [lon, a2], ax, -lon + 180, str(-lon) + "°W")
+            # Special rotation+shift
+        elif lon > 0:
+            plot_text([lon, a1], [lon, a2], ax, -lon, str(lon) + "°E")
+        elif lon == 0:
+            plot_text([lon, a1], [lon, a2], ax, lon, str(lon) + "°")
+        elif lon == -180:
+            plot_text([lon, a1 + 2.2], [lon, a2], ax, lon + 180, str(-lon) + "°")
+        else:
+            plot_text([lon, a1], [lon, a2], ax, -lon, str(-lon) + "°W")
+            
+            
+    return ax
 
 
 def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train,t):
@@ -393,6 +457,7 @@ def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train
 
     y_pred = xr.open_mfdataset(log +'Chloro_pred/Chloro_pred_*.nc')
     y_pred = y_pred.sel(time = slice(d1_pred,d2_pred)).load()
+    y_pred = y_pred.assign_coords(time=pd.to_datetime(y_pred.time.dt.strftime('%Y-%m-01')))
     y_test = ds_out.sel(time = slice(d1_pred,d2_pred)).load()
     y_test = y_test.where(ds_out.mask == 1)
 
@@ -408,14 +473,14 @@ def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train
     #Clouds/missing data
     mask = np.isnan(y_test.chloro) 
     # Ensure masking of period outside of output period.
-    if output == "obs_globcolour":     
+    if output == "globcolor_cmems":     
         mask1 = xr.DataArray(False, dims=("longitude","latitude","time"), 
                              coords={"longitude": mask.longitude, "latitude": mask.latitude, 
                                      "time": y_pred.time.sel(time= slice(d1_pred,y_test.time[0]-1))})
         mask = xr.concat([mask, mask1], dim="time")
 
     y_pred = y_pred.where(mask == False)
-    
+    print("after masking in trend plot:", y_pred)
     #Mean and median for prediction
     weights = np.cos(np.deg2rad(y_pred.latitude))
     weights.name = "weights"
@@ -451,15 +516,21 @@ def plot_trend(ds_out, output, input_name, log,d1_pred,d2_pred,d1_train,d2_train
     y_pred = y_pred.sel(time=t)
     cm = cc.cm["rainbow"]
     
-    fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(20,3), dpi=80, facecolor='w', edgecolor='k')
-    y_pred.chloro_pred.plot(ax = ax[1],cmap = cm,norm=colors.LogNorm(vmin=0.01, vmax=10))
-    y_test.chloro.plot(ax = ax[0],cmap = cm,norm=colors.LogNorm(vmin=0.01, vmax=10))
+    fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(18,9), dpi=80, facecolor='w', edgecolor='k', subplot_kw={'projection': ccrs.SouthPolarStereo()})
+    for a in ax:
+        antarctic_map(a)
+    y_pred.chloro_pred.plot(ax = ax[1],cmap = cm,norm=colors.LogNorm(vmin=0.01, vmax=10), transform=ccrs.PlateCarree(), cbar_kwargs={"orientation": "horizontal", "pad": 0.05, "shrink": 0.8, "label": "Predicted Chl-a"})
+    y_test.chloro.plot(ax = ax[0],cmap = cm,norm=colors.LogNorm(vmin=0.01, vmax=10), transform=ccrs.PlateCarree(), cbar_kwargs={"orientation": "horizontal", "pad": 0.05, "shrink": 0.8, "label": "Satellite Chl-a"})
     
-    ax[0].set_title('Chloro '+input_name+', ' + str(y_pred.time.data).split('T')[0])
-    ax[1].set_title('Chloro pred, ' + str(y_pred.time.data).split('T')[0])
+    # ax[0].set_title('Chloro '+input_name+', ' + str(y_pred.time.data).split('T')[0],  pad=20)
+    # ax[1].set_title('Chloro pred, ' + str(y_pred.time.data).split('T')[0],  pad=20)
+    date_str = str(y_pred.time.data[0])[:10]
 
-    (y_pred.chloro_pred-y_test.chloro).plot(ax = ax[2],cmap = cmocean.cm.balance,vmin = -1,vmax = 1)
-    ax[2].set_title('Chloro pred - '+input_name + ' ' + str(y_pred.time.data).split('T')[0])
+    ax[0].set_title('Chloro ' + input_name + ', ' + date_str, pad=20)
+    ax[1].set_title('Chloro pred, ' + date_str, pad=20)
+
+    (y_pred.chloro_pred-y_test.chloro).plot(ax = ax[2],cmap = cmocean.cm.balance,vmin = -1,vmax = 1, transform=ccrs.PlateCarree(), cbar_kwargs={"orientation": "horizontal", "pad": 0.05, "shrink": 0.8, "label": "Predicted-Satellite"})
+    ax[2].set_title('Chloro pred - ' + input_name + ', ' + date_str, pad=20)
     plt.savefig(log +'Chloro_map_' + t, dpi= 100,bbox_inches = "tight")
 
 

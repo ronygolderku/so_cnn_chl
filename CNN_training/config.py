@@ -9,6 +9,8 @@ class Params:
     batch_size : int
     n_epochs : int
     random_state : int
+    loss_type: str #####################new line added for aysm
+    quantile: int
 
 @dataclass
 class Data:
