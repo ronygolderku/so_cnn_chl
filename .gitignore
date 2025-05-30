@@ -1,2 +1,3 @@
 CNN_training/obs/*.nc
 CNN_training/outputs/**/*.nc
+CNN_training/globcolor_cmems/*.nc
